@@ -1,8 +1,26 @@
 <script>
-import { session, apiGenerate, cancelGenerate } from "./session.svelte.js";
+import { session, apiGenerate, cancelGenerate, apiModels, apiSwitchModel } from "./session.svelte.js";
 import Panel from "./Panel.svelte";
 
 let promptCharCount = $derived(session.prompt.length);
+
+let availableModels = $state([]);
+async function refreshModels() {
+  try { availableModels = await apiModels(); } catch (e) { console.warn("models list failed:", e); }
+}
+$effect(() => { refreshModels(); });
+
+async function onModelChange(e) {
+  const id = e.target.value;
+  if (!id || id === session.model) return;
+  try {
+    await apiSwitchModel(id);
+    await refreshModels();
+  } catch (err) {
+    alert("Model switch failed: " + err.message);
+    e.target.value = session.model;  // revert select
+  }
+}
 
 let ctaLabel = $derived.by(() => {
   if (!session.hasAudio) return "Generate";
@@ -64,8 +82,11 @@ async function clickGenerate() {
   </section>
 
   <section class="cta-panel">
-    <button class="btn btn-primary btn-lg" onclick={clickGenerate}>
-      {#if session.generating}
+    <button class="btn btn-primary btn-lg" onclick={clickGenerate}
+            disabled={session.modelSwitching}>
+      {#if session.modelSwitching}
+        <i class="bi bi-arrow-repeat spin"></i> Loading model…
+      {:else if session.generating}
         <i class="bi bi-stop-circle"></i> Cancel
       {:else}
         <i class="bi bi-magic"></i> {ctaLabel}
@@ -78,13 +99,24 @@ async function clickGenerate() {
       <div class="form-row">
         <label>
           Model
-          <span class="model-dot" class:ok={session.modelLoaded}
-                title={session.modelLoaded ? "model loaded" : "model not loaded"}></span>
+          <span class="model-dot"
+                class:ok={session.modelLoaded && !session.modelSwitching}
+                class:switching={session.modelSwitching}
+                title={session.modelSwitching ? "switching…" : session.modelLoaded ? "loaded" : "not loaded"}></span>
         </label>
-        <select class="select" bind:value={session.model}>
-          <option>Medium (ARC)</option>
-          <option>Medium-base (RF)</option>
-        </select>
+        {#if session.modelSwitching}
+          <span class="switching-label">Switching…</span>
+        {:else}
+          <select class="select" value={session.model} onchange={onModelChange}
+                  disabled={session.modelSwitching || session.generating}>
+            {#each availableModels as m}
+              <option value={m.id}>{m.label}</option>
+            {/each}
+            {#if availableModels.length === 0}
+              <option value={session.model}>{session.model || "Loading…"}</option>
+            {/if}
+          </select>
+        {/if}
       </div>
       <!-- Length: only matters when generating from scratch (no source loaded) -->
       <div class="form-row" class:disabled={session.hasAudio}>
@@ -212,6 +244,11 @@ async function clickGenerate() {
   vertical-align: middle;
 }
 .model-dot.ok { background: var(--success-green); }
+.model-dot.switching { background: var(--accent-blue); animation: pulse 1s ease-in-out infinite; }
+.switching-label { font-size: 12px; color: var(--text-muted); font-style: italic; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+@keyframes spin { to { transform: rotate(360deg); } }
+.spin { display: inline-block; animation: spin 1s linear infinite; }
 .form-row.disabled .slider { opacity: 0.4; pointer-events: none; }
 .prompt-section {
   padding: 0 var(--gap-4) var(--gap-2);

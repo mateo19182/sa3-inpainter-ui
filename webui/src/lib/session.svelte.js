@@ -36,7 +36,8 @@ class Session {
 
   // prompt + settings
   prompt = $state("");
-  model  = $state("Medium (ARC)");
+  model  = $state("");          // current model dir id, synced from backend
+  modelSwitching = $state(false);
   steps  = $state(8);
   cfg    = $state(1.0);
   noise  = $state(0.65);
@@ -168,6 +169,30 @@ export async function apiDeleteLibrary(id) {
   });
   if (!r.ok) throw new Error("delete failed: " + r.status);
   return await r.json();
+}
+
+export async function apiModels() {
+  const r = await fetch("/api/models");
+  if (!r.ok) throw new Error("models list failed: " + r.status);
+  return (await r.json()).models;  // [{id, label, current}]
+}
+
+export async function apiSwitchModel(id) {
+  session.modelSwitching = true;
+  try {
+    const r = await fetch("/api/switch-model", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: id }),
+    });
+    if (r.status === 409) throw new Error("generation in progress");
+    if (!r.ok) throw new Error("switch failed: " + r.status);
+    const j = await r.json();
+    session.model = j.model;
+    return j;
+  } finally {
+    session.modelSwitching = false;
+  }
 }
 
 let _genAbort = null;

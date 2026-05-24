@@ -31,10 +31,10 @@ from stable_audio_3 import StableAudioModel
 from stable_audio_3.loading_utils import load_autoencoder
 from safetensors.torch import load_file
 
-DEFAULT_MODEL_DIR = str(Path.home() / "Projects/stable-audio-3/models/stable-audio-3-medium")
+MODELS_BASE_DIR = Path(os.environ.get("SA3_MODELS_DIR",
+                       str(Path.home() / "Projects/stable-audio-3/models")))
+DEFAULT_MODEL_DIR = str(MODELS_BASE_DIR / "stable-audio-3-medium")
 LOCAL_MEDIUM = os.environ.get("SA3_MODEL_DIR", DEFAULT_MODEL_DIR)
-CKPT = f"{LOCAL_MEDIUM}/model.safetensors"
-CFG  = f"{LOCAL_MEDIUM}/model_config.json"
 DATA_DIR = Path("/tmp/sa3-inpainter"); DATA_DIR.mkdir(exist_ok=True)
 LIBRARY_DIR = Path(os.environ.get("SA3_LIBRARY_DIR", str(Path.home() / ".sa3-inpainter/library")))
 LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
@@ -69,35 +69,73 @@ if AE_DEVICE is None:
     # Decoding is fast enough on CPU. Override with SA3_AE_DEVICE=cuda if desired.
     AE_DEVICE = "cpu" if DEVICE == "cuda" else DEVICE
 
-print(f"[backend] loading sa3 medium on {DEVICE}...")
-_cfg = json.load(open(CFG))
-for c in _cfg["model"]["conditioning"]["configs"]:
-    if c["type"] == "t5gemma":
-        c["config"]["repo_id"] = LOCAL_MEDIUM
-_model = create_diffusion_cond_from_config(_cfg)
-_model.load_state_dict(load_file(CKPT), strict=False)
-_model.eval().requires_grad_(False).to(DEVICE)
-sa = StableAudioModel(_model, _cfg, device=DEVICE, model_half=MODEL_HALF)
-
+sa = None
 mlx_ae = None
 torch_ae = None
-if AE_BACKEND == "mlx":
-    print("[backend] loading MLX AE...")
-    import mlx.core as mx
-    from mlx_sa3.ae import SA3MediumAE, decode_chunked
-    from mlx_sa3.weights import load_ae_weights
-    mlx_ae = SA3MediumAE()
-    load_ae_weights(mlx_ae, CKPT)
-elif AE_BACKEND == "torch":
-    print(f"[backend] loading torch AE on {AE_DEVICE}...")
-    torch_ae = load_autoencoder(CFG, CKPT, device=AE_DEVICE)
-    torch_ae.eval().requires_grad_(False)
-    try:
-        torch_ae.bottleneck.noise_regularize = False
-    except Exception:
-        pass
-else:
-    raise RuntimeError(f"unsupported SA3_AE_BACKEND={AE_BACKEND!r}; use auto, mlx, or torch")
+_current_model_dir: str = ""
+_model_switching = False
+# _cond_cache declared below after app setup; referenced here by name only
+
+
+def _load_model(model_dir: str):
+    """Load (or hot-swap) the DIT + AE from model_dir, freeing VRAM first."""
+    global sa, mlx_ae, torch_ae, _current_model_dir
+    import gc
+
+    ckpt     = f"{model_dir}/model.safetensors"
+    cfg_path = f"{model_dir}/model_config.json"
+    if not Path(ckpt).exists():
+        raise FileNotFoundError(f"no model.safetensors in {model_dir}")
+    if not Path(cfg_path).exists():
+        raise FileNotFoundError(f"no model_config.json in {model_dir}")
+
+    # ---- free existing models ----
+    if sa is not None:
+        try: _cond_cache.clear()
+        except NameError: pass
+        del sa;      sa = None
+    if torch_ae is not None:
+        del torch_ae; torch_ae = None
+    if mlx_ae is not None:
+        del mlx_ae;  mlx_ae = None
+    gc.collect()
+    if DEVICE == "cuda":
+        torch.cuda.empty_cache()
+
+    # ---- load DIT ----
+    print(f"[backend] loading model from {Path(model_dir).name} on {DEVICE}...")
+    cfg = json.load(open(cfg_path))
+    for c in cfg["model"]["conditioning"]["configs"]:
+        if c["type"] == "t5gemma":
+            c["config"]["repo_id"] = model_dir
+    model = create_diffusion_cond_from_config(cfg)
+    model.load_state_dict(load_file(ckpt), strict=False)
+    model.eval().requires_grad_(False).to(DEVICE)
+    sa = StableAudioModel(model, cfg, device=DEVICE, model_half=MODEL_HALF)
+
+    # ---- load AE ----
+    if AE_BACKEND == "mlx":
+        import mlx.core as mx
+        from mlx_sa3.ae import SA3MediumAE, decode_chunked
+        from mlx_sa3.weights import load_ae_weights
+        mlx_ae = SA3MediumAE()
+        load_ae_weights(mlx_ae, ckpt)
+    elif AE_BACKEND == "torch":
+        print(f"[backend] loading torch AE on {AE_DEVICE}...")
+        torch_ae = load_autoencoder(cfg_path, ckpt, device=AE_DEVICE)
+        torch_ae.eval().requires_grad_(False)
+        try:
+            torch_ae.bottleneck.noise_regularize = False
+        except Exception:
+            pass
+    else:
+        raise RuntimeError(f"unsupported SA3_AE_BACKEND={AE_BACKEND!r}")
+
+    _current_model_dir = model_dir
+    print(f"[backend] ready: {Path(model_dir).name}")
+
+
+_load_model(LOCAL_MEDIUM)
 
 
 def decode_latents(lat_np):
@@ -557,6 +595,56 @@ async def list_loras():
     return {"dir": str(LORA_DIR), "files": files}
 
 
+def _model_label(dirname: str) -> str:
+    """Convert a model directory name to a display label."""
+    s = dirname.removeprefix("stable-audio-3-").removeprefix("stable-audio-")
+    return " ".join(w.capitalize() for w in s.replace("-", " ").split())
+
+
+def _list_models():
+    if not MODELS_BASE_DIR.exists():
+        return []
+    models = []
+    for d in sorted(MODELS_BASE_DIR.iterdir()):
+        if d.is_dir() and (d / "model.safetensors").exists() and (d / "model_config.json").exists():
+            models.append({
+                "id":      d.name,
+                "label":   _model_label(d.name),
+                "current": str(d) == _current_model_dir,
+            })
+    return models
+
+
+@app.get("/api/models")
+async def list_models():
+    return {"models": _list_models()}
+
+
+class SwitchModelBody(BaseModel):
+    model: str   # directory name, e.g. "stable-audio-3-small-sfx-base"
+
+
+@app.post("/api/switch-model")
+async def switch_model(body: SwitchModelBody):
+    global _model_switching
+    target = MODELS_BASE_DIR / body.model
+    if not target.is_dir():
+        raise HTTPException(404, f"model directory not found: {body.model}")
+    if str(target) == _current_model_dir:
+        return {"ok": True, "model": body.model, "label": _model_label(body.model)}
+
+    if not _gen_lock.acquire(blocking=False):
+        raise HTTPException(409, "generation in progress — try again when it finishes")
+    _model_switching = True
+    try:
+        await asyncio.to_thread(_load_model, str(target))
+    finally:
+        _model_switching = False
+        _gen_lock.release()
+
+    return {"ok": True, "model": body.model, "label": _model_label(body.model)}
+
+
 @app.get("/api/stats")
 async def get_stats():
     cpu = psutil.cpu_percent(interval=None)
@@ -578,6 +666,8 @@ async def get_stats():
         "device": DEVICE,
         "ae_backend": AE_BACKEND,
         "model_loaded": True,
+        "current_model": Path(_current_model_dir).name if _current_model_dir else "",
+        "model_switching": _model_switching,
     }
 
 

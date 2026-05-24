@@ -184,6 +184,7 @@ async function pollStats() {
       mpsAllocGb: j.mps_alloc,
     };
     session.modelLoaded = j.model_loaded;
+    if (j.current_model && !session.modelSwitching) session.model = j.current_model;
   } catch (e) {
     session.modelLoaded = false;
   }
