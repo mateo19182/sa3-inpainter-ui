@@ -26,6 +26,7 @@ dependencies = [
 [[tool.uv.index]]
 name = "amd-gfx1151"
 url = "https://repo.amd.com/rocm/whl/gfx1151/"
+explicit = true
 
 [project.optional-dependencies]
 mlx = [

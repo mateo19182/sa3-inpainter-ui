@@ -8,6 +8,14 @@ from pathlib import Path
 warnings.filterwarnings("ignore")
 os.environ.setdefault("PYTHONWARNINGS", "ignore")
 
+# ROCm GEMM / kernel tuning — must be set before torch import.
+# TunableOp: auto-tunes GEMM kernel selection on first run, caches to disk.
+os.environ.setdefault("PYTORCH_TUNABLEOP_ENABLED", "1")
+os.environ.setdefault("TORCH_BLAS_PREFER_HIPBLASLT", "1")
+
+import matplotlib
+matplotlib.use("Agg")  # non-interactive backend; must be set before any pyplot import
+
 import numpy as np
 import torch
 import soundfile as sf
@@ -48,13 +56,18 @@ def pick_device():
 
 
 DEVICE = pick_device()
-MODEL_HALF = os.environ.get("SA3_MODEL_HALF", "0") == "1"
+# Half precision on CUDA/ROCm halves VRAM; default on so the model can coexist with
+# other GPU consumers (compositor, Electron apps). Override with SA3_MODEL_HALF=0.
+_half_default = "1" if DEVICE == "cuda" else "0"
+MODEL_HALF = os.environ.get("SA3_MODEL_HALF", _half_default) == "1"
 AE_BACKEND = os.environ.get("SA3_AE_BACKEND", "auto").lower()
 if AE_BACKEND == "auto":
     AE_BACKEND = "mlx" if DEVICE == "mps" and platform.system() == "Darwin" else "torch"
 AE_DEVICE = os.environ.get("SA3_AE_DEVICE")
 if AE_DEVICE is None:
-    AE_DEVICE = DEVICE
+    # Keep AE on CPU by default to leave VRAM headroom for the DIT and other GPU users.
+    # Decoding is fast enough on CPU. Override with SA3_AE_DEVICE=cuda if desired.
+    AE_DEVICE = "cpu" if DEVICE == "cuda" else DEVICE
 
 print(f"[backend] loading sa3 medium on {DEVICE}...")
 _cfg = json.load(open(CFG))
@@ -116,6 +129,25 @@ def render_noise_spec_once():
 state = {"audio_path": None, "version": 0}
 _gen_lock = threading.Lock()
 app = FastAPI()
+
+# Text-embedding cache: keyed by (prompt, duration_seconds).
+# Avoids re-running T5/Gemma on every inpaint call when the prompt doesn't change.
+_cond_cache: dict = {}
+_COND_CACHE_MAX = 8
+
+def _get_conditioning(prompt: str, duration: float):
+    """Return (tensors_copy, was_cached). Shallow-copies before returning so
+    generate() can mutate the dict (it adds inpaint_mask/inpaint_masked_input)
+    without corrupting the cached original."""
+    key = (prompt, round(duration, 2))
+    was_cached = key in _cond_cache
+    if not was_cached:
+        conditioning, _ = sa._build_conditioning_dicts(prompt, None, duration, 1)
+        tensors = sa.model.conditioner(conditioning, DEVICE)
+        if len(_cond_cache) >= _COND_CACHE_MAX:
+            _cond_cache.pop(next(iter(_cond_cache)))
+        _cond_cache[key] = tensors
+    return dict(_cond_cache[key]), was_cached
 
 
 def compute_envelope(audio_np):
@@ -383,7 +415,14 @@ def _run_generate(body):
     n_regen = sum(body.mask) if body.mask else 0
     print(f"[generate] source={has_source} mask_len={len(body.mask) if body.mask else 0} regen_latents={n_regen} mode={('inpaint' if has_source and has_mask else 'vary' if has_source else 't2a')}")
 
-    kwargs = dict(prompt=body.prompt, steps=steps, cfg_scale=cfg, seed=seed, return_latents=True)
+    eff_duration = duration
+    if has_source and state["audio_path"]:
+        info = sf.info(state["audio_path"])
+        eff_duration = info.frames / info.samplerate
+    t_cond = time.time()
+    cached_cond, was_cached = _get_conditioning(body.prompt, eff_duration)
+    print(f"[backend] conditioning {'(cached)' if was_cached else '(encoded)'} {time.time()-t_cond:.2f}s")
+    kwargs = dict(conditioning_tensors=cached_cond, steps=steps, cfg_scale=cfg, seed=seed, return_latents=True)
     if has_source and has_mask:
         audio, _ = sf.read(state["audio_path"])
         audio_t = torch.from_numpy(audio.T).float().to(DEVICE)   # (channels, T) — no batch dim
