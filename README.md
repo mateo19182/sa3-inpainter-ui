@@ -6,6 +6,8 @@ Browser UI for Stable Audio 3 medium — inpainting / vary / text-to-audio. MLX-
 
 Upstream: [Stability-AI/stable-audio-3](https://github.com/Stability-AI/stable-audio-3) · [stabilityai/stable-audio-3-medium on HF](https://huggingface.co/stabilityai/stable-audio-3-medium)
 
+Note on [Stability-AI/stable-audio-tools](https://github.com/Stability-AI/stable-audio-tools): it can load/generate with SA3 and implements the broader research/training stack, including inpainting, RF sampling, `pingpong`, variable-length conditioning, dataset utilities, and LoRA training. This app uses the newer focused `stable-audio-3` package for runtime inference; `stable-audio-tools` is mainly useful here as a reference for sampler/mask behavior or future fine-tuning workflows.
+
 **Has:** paint-on-spectrogram inpainting · text-to-audio · audio-to-audio (vary) · scroll/pinch zoom anchored at cursor · shift-scroll pan · click-to-scrub playhead · lowpass + duck on playback over masked regions · per-latent frequency-colored waveform · ghost overlay for past inpaints · LoRA stacking with strength sliders · live system stats
 
 **Doesn't have:** variant history / undo · per-region prompts · streaming per-step diffusion previews · multi-track · MIDI · frequency-bounded selections · mobile/touch layout · auth · cloud
@@ -62,4 +64,3 @@ webui/src/lib/MainCanvas.svelte   spectrogram + paint + zoom interaction
 webui/src/App.svelte         layout + audio graph + playback wiring
 design.md                    the design spec
 ```
-

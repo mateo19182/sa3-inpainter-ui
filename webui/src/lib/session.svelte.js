@@ -47,6 +47,9 @@ class Session {
   loras = $state([]);
 
   generating  = $state(false);
+  activityLog = $state([]);
+  generationStatus = $state("");
+  modelSwitchStatus = $state("");
   scrubbingNoise = $state(false);  // true while the user is actively dragging the A2A slider
   modelLoaded = $state(false);   // assume down until pollStats confirms otherwise
   stats = $state({ cpu: 0, vram: 0, ram: 0 });
@@ -88,6 +91,21 @@ class Session {
 
   clearMask() {
     this.mask = new Uint8Array(this.mask.length);
+  }
+
+  log(scope, message, detail = {}) {
+    const entry = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      time: new Date(),
+      scope,
+      message,
+      detail,
+    };
+    this.activityLog = [entry, ...this.activityLog].slice(0, 80);
+    const prefix = scope === "model" ? "[model]" : scope === "generate" ? "[generate]" : "[frontend]";
+    if (Object.keys(detail).length) console.log(prefix, message, detail);
+    else console.log(prefix, message);
+    return entry;
   }
 }
 
@@ -179,17 +197,32 @@ export async function apiModels() {
 
 export async function apiSwitchModel(id) {
   session.modelSwitching = true;
+  session.modelSwitchStatus = `switching to ${id}`;
+  session.log("model", `switch requested: ${id}`);
   try {
+    session.log("model", "waiting for backend model loader");
     const r = await fetch("/api/switch-model", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ model: id }),
     });
-    if (r.status === 409) throw new Error("generation in progress");
+    if (r.status === 409) {
+      session.modelSwitchStatus = "blocked by active generation";
+      session.log("model", "switch blocked: generation in progress");
+      throw new Error("generation in progress");
+    }
     if (!r.ok) throw new Error("switch failed: " + r.status);
+    session.modelSwitchStatus = "backend response received";
+    session.log("model", "backend returned switch response");
     const j = await r.json();
     session.model = j.model;
+    session.modelSwitchStatus = `ready: ${j.label || j.model}`;
+    session.log("model", `ready: ${j.label || j.model}`, { model: j.model });
     return j;
+  } catch (e) {
+    session.modelSwitchStatus = `failed: ${e.message}`;
+    session.log("model", `switch failed: ${e.message}`);
+    throw e;
   } finally {
     session.modelSwitching = false;
   }
@@ -198,16 +231,24 @@ export async function apiSwitchModel(id) {
 let _genAbort = null;
 
 export function cancelGenerate() {
+  const hadActiveRequest = !!_genAbort || session.generating;
   if (_genAbort) _genAbort.abort();
   _genAbort = null;
   session.generating = false;
+  if (hadActiveRequest) {
+    session.generationStatus = "canceled";
+    session.log("generate", "canceled");
+  }
 }
 
 export async function apiGenerate() {
   cancelGenerate();
   session.generating = true;
+  session.generationStatus = "preparing request";
   _genAbort = new AbortController();
   try {
+    const mode = !session.hasAudio ? "text-to-audio" : session.hasMask ? "inpaint" : "vary";
+    const regenLatents = Array.from(session.mask).reduce((n, v) => n + (v ? 1 : 0), 0);
     const body = {
       prompt: session.prompt,
       mask: Array.from(session.mask),
@@ -219,6 +260,12 @@ export async function apiGenerate() {
         duration: session.trackSeconds || session.duration,
       },
     };
+    session.log("generate", `request prepared: ${mode}`, {
+      steps: body.settings.steps,
+      duration: body.settings.duration,
+      regenLatents,
+    });
+    session.generationStatus = "waiting for backend";
     const r = await fetch("/api/generate", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -226,11 +273,15 @@ export async function apiGenerate() {
       signal: _genAbort.signal,
     });
     if (r.status === 409) {
-      console.warn("[generate] backend busy with another gen — try again when it finishes");
+      session.generationStatus = "backend busy";
+      session.log("generate", "backend busy with another generation");
       return null;
     }
     if (!r.ok) throw new Error("generate failed: " + r.status);
+    session.generationStatus = "backend response received";
+    session.log("generate", "backend returned generated audio metadata");
     const j = await r.json();
+    session.generationStatus = "refreshing track";
     session.hasAudio = true;
     session.version = j.version;
     session.setTrackInfo(j);
@@ -239,9 +290,16 @@ export async function apiGenerate() {
       session.ghostMask = new Uint8Array(body.mask);
     }
     session.mask = new Uint8Array(session.mask.length);
+    session.generationStatus = `ready: ${j.duration.toFixed(1)}s`;
+    session.log("generate", "ready", { duration: j.duration, latents: j.count });
     return j;
   } catch (e) {
-    if (e.name === "AbortError") return null;
+    if (e.name === "AbortError") {
+      session.generationStatus = "canceled";
+      return null;
+    }
+    session.generationStatus = `failed: ${e.message}`;
+    session.log("generate", `failed: ${e.message}`);
     throw e;
   } finally {
     _genAbort = null;

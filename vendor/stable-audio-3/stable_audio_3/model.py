@@ -94,8 +94,10 @@ class StableAudioModel:
         seed: int = -1,
         # Audio inputs
         init_audio: tp.Optional[tp.Tuple[int, torch.Tensor]] = None,
+        init_latents: tp.Optional[torch.Tensor] = None,
         init_noise_level: float = 1.0,
         inpaint_audio: tp.Optional[tp.Tuple[int, torch.Tensor]] = None,
+        inpaint_latents: tp.Optional[torch.Tensor] = None,
         inpaint_mask=None,
         inpaint_mask_start_seconds: tp.Optional[tp.Union[float, tp.List[float]]] = None,
         inpaint_mask_end_seconds: tp.Optional[tp.Union[float, tp.List[float]]] = None,
@@ -131,8 +133,10 @@ class StableAudioModel:
             negative_conditioning_tensors: A dictionary of precomputed negative conditioning tensors for classifier-free guidance
             seed: The random seed to use for generation, or -1 to use a random seed.
             init_audio: A tuple of (sample_rate, audio) to use as the initial audio for generation.
+            init_latents: Pre-encoded initial latents. Skips pretransform.encode when provided.
             init_noise_level: The noise level to use when generating from an initial audio sample.
             inpaint_audio: A tuple of (sample_rate, audio) to use as the source audio for inpainting. The inpaint region will be determined by the inpaint_mask or inpaint_mask_start_seconds/inpaint_mask_end_seconds parameters.
+            inpaint_latents: Pre-encoded inpaint latents. Skips pretransform.encode when provided.
             inpaint_mask: A prebuilt mask tensor for inpainting. Shape should be [batch_size, sample_size].
                 Ignored if inpaint_mask_start_seconds/inpaint_mask_end_seconds are provided.
             inpaint_mask_start_seconds: Start of the inpaint region in seconds. Can be a float
@@ -172,6 +176,11 @@ class StableAudioModel:
             latent_sample_size = (
                 audio_sample_size // self.model.pretransform.downsampling_ratio
             )
+
+        if init_latents is not None:
+            latent_sample_size = init_latents.shape[-1]
+        if inpaint_latents is not None:
+            latent_sample_size = inpaint_latents.shape[-1]
 
         # Build inpaint mask from seconds if provided
         if (
@@ -259,14 +268,24 @@ class StableAudioModel:
             negative_conditioning_tensors = {}
 
         # Process init audio
-        if init_audio is not None:
+        if init_latents is not None:
+            init_audio = init_latents.to(device).repeat(batch_size, 1, 1)
+        elif init_audio is not None:
             init_audio, inpaint_mask = self._encode_audio_input(
                 init_audio, audio_sample_size, inpaint_mask
             )
             init_audio = init_audio.repeat(batch_size, 1, 1)
 
         # Process inpaint audio
-        if inpaint_audio is not None:
+        if inpaint_latents is not None:
+            inpaint_audio = inpaint_latents.to(device).repeat(batch_size, 1, 1)
+            if inpaint_mask is not None:
+                inpaint_mask = interpolate(
+                    inpaint_mask.unsqueeze(1),
+                    size=inpaint_audio.shape[-1],
+                    mode="nearest",
+                ).squeeze(1)
+        elif inpaint_audio is not None:
             inpaint_audio, inpaint_mask = self._encode_audio_input(
                 inpaint_audio, audio_sample_size, inpaint_mask
             )
@@ -305,6 +324,8 @@ class StableAudioModel:
 
         model_dtype = next(self.model.model.parameters()).dtype
         noise = noise.type(model_dtype)
+        if init_audio is not None:
+            init_audio = init_audio.type(model_dtype)
         conditioning_inputs = {
             k: v.type(model_dtype) if v is not None else v
             for k, v in conditioning_inputs.items()

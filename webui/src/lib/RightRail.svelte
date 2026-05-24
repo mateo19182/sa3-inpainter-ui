@@ -3,6 +3,11 @@ import { session, apiGenerate, cancelGenerate, apiModels, apiSwitchModel } from 
 import Panel from "./Panel.svelte";
 
 let promptCharCount = $derived(session.prompt.length);
+let recentActivity = $derived(session.activityLog.slice(0, 8));
+
+function formatLogTime(t) {
+  return t.toLocaleTimeString([], { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
 
 let availableModels = $state([]);
 async function refreshModels() {
@@ -92,6 +97,27 @@ async function clickGenerate() {
         <i class="bi bi-magic"></i> {ctaLabel}
       {/if}
     </button>
+  </section>
+
+  <section class="activity-section">
+    <header class="activity-header">
+      <span>Progress</span>
+      {#if session.generating}
+        <span class="activity-state">{session.generationStatus || "generating"}</span>
+      {:else if session.modelSwitching}
+        <span class="activity-state">{session.modelSwitchStatus || "switching"}</span>
+      {/if}
+    </header>
+    <div class="activity-log">
+      {#each recentActivity as entry}
+        <div class="activity-row" title={`${formatLogTime(entry.time)} ${entry.message}`}>
+          <span class="activity-time">{formatLogTime(entry.time)}</span>
+          <span class="activity-message">{entry.message}</span>
+        </div>
+      {:else}
+        <div class="activity-empty">no progress events yet</div>
+      {/each}
+    </div>
   </section>
 
   <Panel title="Generation">
@@ -390,6 +416,72 @@ async function clickGenerate() {
   font-variant-numeric: tabular-nums;
   color: var(--text-secondary);
   min-width: 48px;
+  text-align: center;
+}
+.activity-section {
+  padding: 0 var(--gap-4) var(--gap-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-2);
+}
+.activity-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+.activity-state {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--accent-blue);
+  font-size: 11px;
+  font-weight: 400;
+}
+.activity-log {
+  border: 1px solid var(--border-color);
+  background: var(--code-block);
+  min-height: 44px;
+  max-height: 148px;
+  overflow-y: auto;
+}
+.activity-row {
+  display: grid;
+  grid-template-columns: 56px 1fr;
+  gap: var(--gap-2);
+  align-items: baseline;
+  padding: 5px var(--gap-2);
+  border-bottom: 1px solid var(--border-color);
+  font-size: 11px;
+}
+.activity-row:hover {
+  background: var(--code-highlight);
+}
+.activity-row:last-child { border-bottom: 0; }
+.activity-time {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.activity-message {
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.activity-row:hover .activity-message {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  word-break: break-word;
+}
+.activity-empty {
+  padding: var(--gap-3);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-style: italic;
   text-align: center;
 }
 </style>

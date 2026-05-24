@@ -10,6 +10,23 @@ from .blocks import FourierFeatures, ExpoFourierFeatures
 from .transformer import ContinuousTransformer        
 from .lora import LoRAParametrization, set_lora_strength, has_lora, enable_lora, disable_lora, filter_lora_layers
 
+
+class PointwiseConv1dNoMiopen(nn.Module):
+    """1x1 Conv1d equivalent that avoids ROCm MIOpen's conv path."""
+
+    def __init__(self, in_channels, out_channels, bias=False):
+        super().__init__()
+        self.weight = nn.Parameter(torch.empty(out_channels, in_channels, 1))
+        if bias:
+            self.bias = nn.Parameter(torch.empty(out_channels))
+        else:
+            self.register_parameter("bias", None)
+
+    def forward(self, x):
+        y = F.linear(x.transpose(1, 2), self.weight[:, :, 0], self.bias)
+        return y.transpose(1, 2)
+
+
 class DiffusionTransformer(nn.Module):
     def __init__(self,
         io_channels=32,
@@ -130,9 +147,9 @@ class DiffusionTransformer(nn.Module):
         else:
             raise ValueError(f"Unknown transformer type: {self.transformer_type}")
 
-        self.preprocess_conv = nn.Conv1d(dim_in, dim_in, 1, bias=False)
+        self.preprocess_conv = PointwiseConv1dNoMiopen(dim_in, dim_in, bias=False)
         nn.init.zeros_(self.preprocess_conv.weight)
-        self.postprocess_conv = nn.Conv1d(io_channels, io_channels, 1, bias=False)
+        self.postprocess_conv = PointwiseConv1dNoMiopen(io_channels, io_channels, bias=False)
         nn.init.zeros_(self.postprocess_conv.weight)
 
     # Fixed logsnr normalization range: maps logsnr to [0, 1] preserving direction (t=0→0, t=1→1)

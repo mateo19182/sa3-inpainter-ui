@@ -1,17 +1,23 @@
 """SA3 Inpainter backend. FastAPI on :5174.
 
-Loads the SA3 medium model once at startup (~30s), exposes JSON API for the
+Loads the SA3 small model once at startup, exposes JSON API for the
 Svelte frontend.
 """
-import os, sys, json, time, warnings, asyncio, threading, platform, re, shutil
+import os, sys, json, time, warnings, asyncio, threading, platform, re, shutil, logging
 from pathlib import Path
 warnings.filterwarnings("ignore")
 os.environ.setdefault("PYTHONWARNINGS", "ignore")
 
-# ROCm GEMM / kernel tuning — must be set before torch import.
-# TunableOp: auto-tunes GEMM kernel selection on first run, caches to disk.
-os.environ.setdefault("PYTORCH_TUNABLEOP_ENABLED", "1")
-os.environ.setdefault("TORCH_BLAS_PREFER_HIPBLASLT", "1")
+# ROCm gfx1151 currently hard-faults in some tuned/compiled kernels. Keep the
+# backend on eager, conservative kernels by default; callers can still opt in.
+os.environ.setdefault("PYTORCH_TUNABLEOP_ENABLED", "0")
+os.environ.setdefault("TORCH_BLAS_PREFER_HIPBLASLT", "0")
+os.environ.setdefault("ENABLE_TORCH_COMPILE", "0")
+# The ROCm gfx1151 wheel currently ships without a matching MIOpen FindDb file,
+# which causes noisy non-fatal warnings during first convolution/autotune use.
+# Keep actual MIOpen errors visible, but suppress warnings unless the caller
+# explicitly opts into a different level.
+os.environ.setdefault("MIOPEN_LOG_LEVEL", "3")
 
 import matplotlib
 matplotlib.use("Agg")  # non-interactive backend; must be set before any pyplot import
@@ -28,12 +34,13 @@ from pydantic import BaseModel
 
 from stable_audio_3.factory import create_diffusion_cond_from_config
 from stable_audio_3 import StableAudioModel
+from stable_audio_3.inference.audio_utils import prepare_audio
 from stable_audio_3.loading_utils import load_autoencoder
 from safetensors.torch import load_file
 
 MODELS_BASE_DIR = Path(os.environ.get("SA3_MODELS_DIR",
                        str(Path.home() / "Projects/stable-audio-3/models")))
-DEFAULT_MODEL_DIR = str(MODELS_BASE_DIR / "stable-audio-3-medium")
+DEFAULT_MODEL_DIR = str(MODELS_BASE_DIR / "stable-audio-3-small-sfx-base")
 LOCAL_MEDIUM = os.environ.get("SA3_MODEL_DIR", DEFAULT_MODEL_DIR)
 DATA_DIR = Path("/tmp/sa3-inpainter"); DATA_DIR.mkdir(exist_ok=True)
 LIBRARY_DIR = Path(os.environ.get("SA3_LIBRARY_DIR", str(Path.home() / ".sa3-inpainter/library")))
@@ -154,6 +161,35 @@ def decode_latents(lat_np):
     return wav.detach().to(torch.float32).cpu().numpy()[0]
 
 
+def encode_source_latents(audio_np, sample_size: int):
+    if AE_BACKEND != "torch" or torch_ae is None:
+        return None
+
+    audio_t = torch.from_numpy(audio_np.T).float()
+    target_channels = (
+        sa.model.pretransform.io_channels
+        if sa.model.pretransform is not None
+        else sa.model.io_channels
+    )
+    prepared = prepare_audio(
+        audio_t,
+        in_sr=SR,
+        target_sr=sa.model.sample_rate,
+        target_length=sample_size,
+        target_channels=target_channels,
+        device=AE_DEVICE,
+    )
+
+    with torch.inference_mode():
+        latents = torch_ae.encode_audio(
+            prepared.to(AE_DEVICE),
+            chunked=sa.model.pretransform.chunked,
+            iterate_batch=sa.model.pretransform.iterate_batch,
+        )
+        latents = latents / getattr(sa.model.pretransform, "scale", 1.0)
+    return latents.to(DEVICE)
+
+
 # defined after helpers below; called at bottom of file
 def render_noise_spec_once():
     """Decode 30s of random latents into a noise spectrogram for the slider preview overlay."""
@@ -167,6 +203,14 @@ def render_noise_spec_once():
 state = {"audio_path": None, "version": 0}
 _gen_lock = threading.Lock()
 app = FastAPI()
+
+
+class _StatsAccessLogFilter(logging.Filter):
+    def filter(self, record):
+        return '"GET /api/stats ' not in record.getMessage()
+
+
+logging.getLogger("uvicorn.access").addFilter(_StatsAccessLogFilter())
 
 # Text-embedding cache: keyed by (prompt, duration_seconds).
 # Avoids re-running T5/Gemma on every inpaint call when the prompt doesn't change.
@@ -434,8 +478,17 @@ async def generate(body: GenBody):
     # the gen itself runs in a thread so the event loop stays responsive for stats/state/etc.
     if not _gen_lock.acquire(blocking=False):
         raise HTTPException(409, "generation in progress")
+    worker = asyncio.create_task(asyncio.to_thread(_run_generate_with_lock, body))
     try:
-        return await asyncio.to_thread(_run_generate, body)
+        return await asyncio.shield(worker)
+    except asyncio.CancelledError:
+        print("[generate] request cancelled during shutdown/disconnect; GPU job is still finishing")
+        raise
+
+
+def _run_generate_with_lock(body):
+    try:
+        return _run_generate(body)
     finally:
         _gen_lock.release()
 
@@ -458,12 +511,13 @@ def _run_generate(body):
         info = sf.info(state["audio_path"])
         eff_duration = info.frames / info.samplerate
     t_cond = time.time()
+    conditioning, _ = sa._build_conditioning_dicts(body.prompt, None, eff_duration, 1)
     cached_cond, was_cached = _get_conditioning(body.prompt, eff_duration)
     print(f"[backend] conditioning {'(cached)' if was_cached else '(encoded)'} {time.time()-t_cond:.2f}s")
-    kwargs = dict(conditioning_tensors=cached_cond, steps=steps, cfg_scale=cfg, seed=seed, return_latents=True)
+    kwargs = dict(conditioning=conditioning, conditioning_tensors=cached_cond, steps=steps, cfg_scale=cfg, seed=seed, return_latents=True)
     if has_source and has_mask:
         audio, _ = sf.read(state["audio_path"])
-        audio_t = torch.from_numpy(audio.T).float().to(DEVICE)   # (channels, T) — no batch dim
+        source_latents = encode_source_latents(audio, audio.shape[0])
         # align mask length to the actual latent count of the loaded audio.
         # frontend's mask may be stale (different count from earlier session state).
         actual_lat = audio.shape[0] // DOWNSAMPLE
@@ -479,14 +533,22 @@ def _run_generate(body):
         print(f"[inpaint] mask aligned: {len(mask_lat)} latents, {int(mask_lat.sum())} regen, {audio.shape[0]} samples")
         kwargs["duration"] = audio.shape[0] / SR
         kwargs["sample_size"] = audio.shape[0]   # cap output to actual source length, not sa3's default 120s
-        kwargs["inpaint_audio"] = (SR, audio_t)
+        if source_latents is None:
+            audio_t = torch.from_numpy(audio.T).float().to(DEVICE)   # (channels, T) — no batch dim
+            kwargs["inpaint_audio"] = (SR, audio_t)
+        else:
+            kwargs["inpaint_latents"] = source_latents
         kwargs["inpaint_mask"] = torch.from_numpy(audio_mask).unsqueeze(0).to(DEVICE)
     elif has_source:
         audio, _ = sf.read(state["audio_path"])
-        audio_t = torch.from_numpy(audio.T).float().to(DEVICE)
+        source_latents = encode_source_latents(audio, audio.shape[0])
         kwargs["duration"] = audio.shape[0] / SR
         kwargs["sample_size"] = audio.shape[0]
-        kwargs["init_audio"] = (SR, audio_t)
+        if source_latents is None:
+            audio_t = torch.from_numpy(audio.T).float().to(DEVICE)
+            kwargs["init_audio"] = (SR, audio_t)
+        else:
+            kwargs["init_latents"] = source_latents
         kwargs["init_noise_level"] = noise
     else:
         kwargs["duration"] = duration
@@ -636,13 +698,23 @@ async def switch_model(body: SwitchModelBody):
     if not _gen_lock.acquire(blocking=False):
         raise HTTPException(409, "generation in progress — try again when it finishes")
     _model_switching = True
+    worker = asyncio.create_task(asyncio.to_thread(_load_model_with_lock, str(target)))
     try:
-        await asyncio.to_thread(_load_model, str(target))
-    finally:
-        _model_switching = False
-        _gen_lock.release()
+        await asyncio.shield(worker)
+    except asyncio.CancelledError:
+        print("[backend] model switch request cancelled during shutdown/disconnect; load is still finishing")
+        raise
 
     return {"ok": True, "model": body.model, "label": _model_label(body.model)}
+
+
+def _load_model_with_lock(model_dir: str):
+    try:
+        _load_model(model_dir)
+    finally:
+        global _model_switching
+        _model_switching = False
+        _gen_lock.release()
 
 
 @app.get("/api/stats")

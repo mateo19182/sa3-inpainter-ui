@@ -184,6 +184,20 @@ async function pollStats() {
       mpsAllocGb: j.mps_alloc,
     };
     session.modelLoaded = j.model_loaded;
+    if (j.model_switching !== lastStatsModelSwitching) {
+      lastStatsModelSwitching = j.model_switching;
+      if (j.model_switching) {
+        session.modelSwitchStatus = "backend is loading weights";
+        session.log("model", "backend reported model switch in progress");
+      } else if (session.modelSwitching) {
+        session.modelSwitchStatus = "backend finished loading";
+        session.log("model", "backend reported model switch complete");
+      }
+    }
+    if (j.current_model && j.current_model !== lastStatsModel) {
+      lastStatsModel = j.current_model;
+      session.log("model", `stats current model: ${j.current_model}`);
+    }
     if (j.current_model && !session.modelSwitching) session.model = j.current_model;
   } catch (e) {
     session.modelLoaded = false;
@@ -191,6 +205,9 @@ async function pollStats() {
 }
 
 let statsInterval = 0;
+let lastStatsModelSwitching = false;
+let lastStatsModel = "";
+let overlayLogs = $derived(session.activityLog.filter(e => e.scope === "generate").slice(0, 4));
 
 onMount(() => {
   window.addEventListener("keydown", onKeyDown);
@@ -229,6 +246,12 @@ onMount(() => {
     <div class="generating-overlay">
       <div class="spinner"></div>
       <div>generating… <span class="gen-elapsed">{genElapsed.toFixed(1)}s</span></div>
+      <div class="gen-status">{session.generationStatus || "running"}</div>
+      <div class="gen-log">
+        {#each overlayLogs as entry}
+          <div>{entry.message}</div>
+        {/each}
+      </div>
     </div>
   {/if}
 
@@ -301,6 +324,17 @@ onMount(() => {
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 .gen-elapsed { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.gen-status { color: var(--text-secondary); font-size: 12px; }
+.gen-log {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-1);
+  min-width: 260px;
+  max-width: min(520px, 70vw);
+  color: var(--text-muted);
+  font-size: 11px;
+  text-align: center;
+}
 
 .drop-overlay {
   position: absolute;

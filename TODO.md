@@ -1,0 +1,8 @@
+- [ ] **Latent Space Audio Explorer** — Interactive UI that maps songs into latent space. Walk/interpolate between encoded tracks to morph audio (e.g. piano → drum loop).
+- [ ] **Semantic Audio Search / Retrieval** — Encode a library of clips into latent embeddings. Search by humming, reference audio, or build a "sound mood board" with similar textures.
+- [ ] **Audio Inpainting Tool** — Encode a track, zero-out a latent region, decode. Remove unwanted sections, replace parts, or build a DAW-style "patch and heal" plugin.
+- [ ] **Lo-Fi / Lossy Compression Art** — Encode→decode at different truncation levels for creative artifacts. Semantic-aware degradation effect plugin.
+- [ ] **Latent Space Mixing / DJing** — Encode multiple tracks into latent space, mix/blend there, then decode. Semantic-aware mashups and transitions.
+- [ ] **Audio Watermarking / Steganography** — Hide messages in latent representations. Perturb latents with hidden data, decode to imperceptibly watermarked audio.
+- [ ] **Style Transfer Pipeline** — Extract style latents from one track, structure latents from another, recombine and decode. Apply vinyl texture to digital audio, etc.
+- [ ] **Generative Loop Machine / Live Performance** — Real-time encode live input → transform latents → decode. Neural granular synth operating on semantic features.
