@@ -127,6 +127,49 @@ export async function apiClear() {
   return j;
 }
 
+export async function apiLibrary() {
+  const r = await fetch("/api/library");
+  if (!r.ok) throw new Error("library failed: " + r.status);
+  return await r.json();
+}
+
+export async function apiLoadLibrary(id) {
+  const r = await fetch("/api/library/load", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id }),
+  });
+  if (!r.ok) throw new Error("load failed: " + r.status);
+  const j = await r.json();
+  session.hasAudio = true;
+  session.version = j.version;
+  session.setTrackInfo(j);
+  session.duration = Math.round(j.duration);
+  session.playhead = 0;
+  session.playing = false;
+  return j;
+}
+
+export async function apiSaveToLibrary(label = "") {
+  const r = await fetch("/api/library/save", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ label }),
+  });
+  if (!r.ok) throw new Error("save failed: " + r.status);
+  return await r.json();
+}
+
+export async function apiDeleteLibrary(id) {
+  const r = await fetch("/api/library/delete", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id }),
+  });
+  if (!r.ok) throw new Error("delete failed: " + r.status);
+  return await r.json();
+}
+
 let _genAbort = null;
 
 export function cancelGenerate() {

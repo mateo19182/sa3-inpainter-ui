@@ -1,7 +1,11 @@
 <script>
-import { session, apiUpload, apiClear } from "./session.svelte.js";
+import { session, apiUpload, apiClear, apiSaveToLibrary } from "./session.svelte.js";
+import LibraryExplorer from "./LibraryExplorer.svelte";
 
 let fileInput = $state(null);
+let libraryOpen = $state(false);
+let saveState = $state("");
+let saveTimer = 0;
 
 async function onFile(e) {
   const file = e.target.files?.[0];
@@ -14,15 +18,18 @@ async function onClear() {
   await apiClear();
 }
 
-function onSave() {
+async function onSave() {
   if (!session.hasAudio) return;
-  const a = document.createElement("a");
-  const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-  a.href = `/api/audio?v=${session.version}`;
-  a.download = `inpaint-${ts}.wav`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
+  saveState = "saving";
+  try {
+    await apiSaveToLibrary(session.prompt || "saved-generation");
+    saveState = "saved";
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => saveState = "", 1400);
+  } catch (e) {
+    saveState = "error";
+    console.error(e);
+  }
 }
 </script>
 
@@ -32,11 +39,15 @@ function onSave() {
     <span class="brand-name">Audio Inpainter</span>
   </div>
   <div class="topbar-actions">
+    <button class="btn btn-ghost" onclick={() => libraryOpen = true}>
+      <i class="bi bi-collection"></i> Library
+    </button>
     <button class="btn btn-ghost" onclick={() => fileInput.click()}>
       <i class="bi bi-folder2-open"></i> Load
     </button>
     <button class="btn btn-ghost" onclick={onSave} disabled={!session.hasAudio}>
-      <i class="bi bi-download"></i> Save
+      <i class="bi {saveState === 'saving' ? 'bi-hourglass-split' : saveState === 'saved' ? 'bi-check2' : 'bi-bookmark-plus'}"></i>
+      {saveState === "saved" ? "Saved" : "Save"}
     </button>
     <button class="btn btn-ghost" onclick={onClear}>
       <i class="bi bi-file-earmark-plus"></i> New
@@ -48,6 +59,8 @@ function onSave() {
            bind:this={fileInput} onchange={onFile} style="display: none" />
   </div>
 </header>
+
+<LibraryExplorer open={libraryOpen} onClose={() => libraryOpen = false} />
 
 <style>
 .topbar {

@@ -3,7 +3,7 @@
 Loads the SA3 medium model once at startup (~30s), exposes JSON API for the
 Svelte frontend.
 """
-import os, sys, json, time, warnings, asyncio, threading, platform
+import os, sys, json, time, warnings, asyncio, threading, platform, re, shutil
 from pathlib import Path
 warnings.filterwarnings("ignore")
 os.environ.setdefault("PYTHONWARNINGS", "ignore")
@@ -28,6 +28,8 @@ LOCAL_MEDIUM = os.environ.get("SA3_MODEL_DIR", DEFAULT_MODEL_DIR)
 CKPT = f"{LOCAL_MEDIUM}/model.safetensors"
 CFG  = f"{LOCAL_MEDIUM}/model_config.json"
 DATA_DIR = Path("/tmp/sa3-inpainter"); DATA_DIR.mkdir(exist_ok=True)
+LIBRARY_DIR = Path(os.environ.get("SA3_LIBRARY_DIR", str(Path.home() / ".sa3-inpainter/library")))
+LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
 SR = 44100
 DOWNSAMPLE = 4096
 BANDS = [(0, 250), (250, 2500), (2500, 22050)]
@@ -192,7 +194,124 @@ def soft_limit(x, ceiling=0.97, knee=0.85):
     return s * out
 
 
-def persist_audio(audio_np):
+LIBRARY_KINDS = {
+    "audio": "audio",
+    "generation": "generations",
+}
+
+
+def sanitize_label(label):
+    label = Path(label or "").stem
+    label = re.sub(r"[^a-zA-Z0-9._ -]+", "", label).strip(" ._-")
+    label = re.sub(r"\s+", "-", label)
+    return label[:64] or "untitled"
+
+
+def library_subdir(kind):
+    if kind not in LIBRARY_KINDS:
+        raise HTTPException(400, "unknown library kind")
+    p = LIBRARY_DIR / LIBRARY_KINDS[kind]
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def unique_library_path(kind, label):
+    ts = time.strftime("%Y%m%d-%H%M%S")
+    base = f"{ts}-{sanitize_label(label)}"
+    folder = library_subdir(kind)
+    out = folder / f"{base}.wav"
+    i = 2
+    while out.exists():
+        out = folder / f"{base}-{i}.wav"
+        i += 1
+    return out
+
+
+def library_id(path):
+    rel = path.relative_to(LIBRARY_DIR)
+    kind_dir = rel.parts[0]
+    kind = next((k for k, v in LIBRARY_KINDS.items() if v == kind_dir), kind_dir)
+    return f"{kind}/{rel.name}"
+
+
+def resolve_library_id(item_id):
+    try:
+        kind, name = item_id.split("/", 1)
+    except ValueError:
+        raise HTTPException(400, "invalid library id")
+    if "/" in name or "\\" in name or name in {"", ".", ".."}:
+        raise HTTPException(400, "invalid library id")
+    path = library_subdir(kind) / name
+    if not path.exists() or not path.is_file():
+        raise HTTPException(404, "library item not found")
+    return path
+
+
+def library_entry(path):
+    stat = path.stat()
+    duration = 0.0
+    samplerate = SR
+    channels = 2
+    try:
+        info = sf.info(path)
+        duration = float(info.duration)
+        samplerate = int(info.samplerate)
+        channels = int(info.channels)
+    except Exception:
+        pass
+    item_id = library_id(path)
+    kind = item_id.split("/", 1)[0]
+    return {
+        "id": item_id,
+        "kind": kind,
+        "name": path.stem,
+        "filename": path.name,
+        "created": stat.st_mtime,
+        "bytes": stat.st_size,
+        "duration": duration,
+        "samplerate": samplerate,
+        "channels": channels,
+    }
+
+
+def save_library_copy(kind, label, source_path=None, audio_np=None):
+    out = unique_library_path(kind, label)
+    if audio_np is not None:
+        sf.write(out, audio_np.T, SR)
+    elif source_path is not None:
+        shutil.copyfile(source_path, out)
+    else:
+        raise ValueError("source_path or audio_np required")
+    return library_entry(out)
+
+
+def list_library_items():
+    items = []
+    for kind in LIBRARY_KINDS:
+        folder = library_subdir(kind)
+        items.extend(library_entry(p) for p in folder.glob("*.wav") if p.is_file())
+    return sorted(items, key=lambda item: item["created"], reverse=True)
+
+
+def load_audio_np(audio_np, sr):
+    if audio_np.ndim == 1:
+        audio_np = np.stack([audio_np, audio_np], axis=-1)
+    if sr != SR:
+        import torchaudio
+        a = torch.from_numpy(audio_np.T).float()
+        a = torchaudio.transforms.Resample(sr, SR)(a)
+        audio_np = a.numpy().T
+    env = persist_audio(audio_np.T)
+    return {"version": state["version"], "count": env["count"],
+            "duration": env["count"] * DOWNSAMPLE / SR}
+
+
+def load_audio_file(path):
+    audio, sr = sf.read(path)
+    return load_audio_np(audio, sr)
+
+
+def persist_audio(audio_np, library_kind=None, library_label=None):
     """audio_np: (2, T) float in [-1, 1]. Writes wav + envelope.json + spec.png + overview.png.
     Caller is responsible for limiting/scaling — we don't touch the levels here so
     inpaint-preserved regions stay bit-exact with the source."""
@@ -204,6 +323,8 @@ def persist_audio(audio_np):
     with open(DATA_DIR / "envelope.json", "w") as f: json.dump(env, f)
     render_spec_png(audio_np, DATA_DIR / "current_spec.png")
     render_overview_png(audio_np, DATA_DIR / "current_overview.png")
+    if library_kind:
+        save_library_copy(library_kind, library_label or library_kind, source_path=p)
     return env
 
 
@@ -214,13 +335,14 @@ async def upload(file: UploadFile = File(...)):
     raw = DATA_DIR / "upload.wav"
     with open(raw, "wb") as f: f.write(await file.read())
     audio, sr = sf.read(raw)
-    if audio.ndim == 1: audio = np.stack([audio, audio], axis=-1)
+    if audio.ndim == 1:
+        audio = np.stack([audio, audio], axis=-1)
     if sr != SR:
         import torchaudio
         a = torch.from_numpy(audio.T).float()
         a = torchaudio.transforms.Resample(sr, SR)(a)
         audio = a.numpy().T
-    env = persist_audio(audio.T)
+    env = persist_audio(audio.T, library_kind="audio", library_label=file.filename)
     return {"version": state["version"], "count": env["count"],
             "duration": env["count"] * DOWNSAMPLE / SR}
 
@@ -229,6 +351,11 @@ class GenBody(BaseModel):
     prompt: str = ""
     mask: list[int] = []
     settings: dict = {}
+
+
+class LibraryBody(BaseModel):
+    id: str = ""
+    label: str = ""
 
 
 @app.post("/api/generate")
@@ -333,7 +460,7 @@ def _run_generate(body):
                 m_eased[:, lo:hi] = np.maximum(m_eased[:, lo:hi], w)
         wav_np = m_eased * orig_t + (1.0 - m_eased) * wav_np
 
-    env = persist_audio(wav_np)
+    env = persist_audio(wav_np, library_kind="generation", library_label=body.prompt or "generation")
     return {"version": state["version"], "count": env["count"],
             "duration": env["count"] * DOWNSAMPLE / SR}
 
@@ -348,6 +475,35 @@ async def clear():
 @app.get("/api/state")
 async def get_state():
     return {"has_audio": state["audio_path"] is not None, "version": state["version"], "model_loaded": True}
+
+
+@app.get("/api/library")
+async def get_library():
+    return {"dir": str(LIBRARY_DIR), "items": list_library_items()}
+
+
+@app.post("/api/library/load")
+async def load_library(body: LibraryBody):
+    if not body.id:
+        raise HTTPException(400, "missing library id")
+    return load_audio_file(resolve_library_id(body.id))
+
+
+@app.post("/api/library/save")
+async def save_current_to_library(body: LibraryBody):
+    if not state["audio_path"]:
+        raise HTTPException(404, "no audio")
+    item = save_library_copy("generation", body.label or "saved-generation", source_path=state["audio_path"])
+    return {"item": item}
+
+
+@app.post("/api/library/delete")
+async def delete_library_item(body: LibraryBody):
+    if not body.id:
+        raise HTTPException(400, "missing library id")
+    path = resolve_library_id(body.id)
+    path.unlink()
+    return {"ok": True}
 
 
 import psutil
