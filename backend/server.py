@@ -8,16 +8,7 @@ from pathlib import Path
 warnings.filterwarnings("ignore")
 os.environ.setdefault("PYTHONWARNINGS", "ignore")
 
-# ROCm gfx1151 currently hard-faults in some tuned/compiled kernels. Keep the
-# backend on eager, conservative kernels by default; callers can still opt in.
-os.environ.setdefault("PYTORCH_TUNABLEOP_ENABLED", "0")
-os.environ.setdefault("TORCH_BLAS_PREFER_HIPBLASLT", "0")
 os.environ.setdefault("ENABLE_TORCH_COMPILE", "0")
-# The ROCm gfx1151 wheel currently ships without a matching MIOpen FindDb file,
-# which causes noisy non-fatal warnings during first convolution/autotune use.
-# Keep actual MIOpen errors visible, but suppress warnings unless the caller
-# explicitly opts into a different level.
-os.environ.setdefault("MIOPEN_LOG_LEVEL", "3")
 
 import matplotlib
 matplotlib.use("Agg")  # non-interactive backend; must be set before any pyplot import
@@ -39,7 +30,7 @@ from stable_audio_3.loading_utils import load_autoencoder
 from safetensors.torch import load_file
 
 MODELS_BASE_DIR = Path(os.environ.get("SA3_MODELS_DIR",
-                       str(Path.home() / "Projects/stable-audio-3/models")))
+                       str(Path.home() / ".sa3-studio/models")))
 DEFAULT_MODEL_DIR = str(MODELS_BASE_DIR / "stable-audio-3-small-sfx-base")
 LOCAL_MEDIUM = os.environ.get("SA3_MODEL_DIR", DEFAULT_MODEL_DIR)
 DATA_DIR = Path("/tmp/sa3-inpainter"); DATA_DIR.mkdir(exist_ok=True)
@@ -55,7 +46,6 @@ def pick_device():
     if requested != "auto":
         return requested
     if torch.cuda.is_available():
-        # ROCm PyTorch also reports AMD GPUs through the cuda device API.
         return "cuda"
     if platform.system() == "Darwin" and torch.backends.mps.is_available():
         return "mps"
@@ -63,7 +53,7 @@ def pick_device():
 
 
 DEVICE = pick_device()
-# Half precision on CUDA/ROCm halves VRAM; default on so the model can coexist with
+# Half precision on CUDA halves VRAM; default on so the model can coexist with
 # other GPU consumers (compositor, Electron apps). Override with SA3_MODEL_HALF=0.
 _half_default = "1" if DEVICE == "cuda" else "0"
 MODEL_HALF = os.environ.get("SA3_MODEL_HALF", _half_default) == "1"

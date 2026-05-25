@@ -17,16 +17,10 @@ dependencies = [
     "soundfile>=0.13.1",
     "torch>=2.11.0,<2.12",
     "torchaudio>=2.11.0,<2.12",
-    "rocm[libraries]==7.13.0 ; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "transformers>=5.9.0",
     "uvicorn>=0.47.0",
     "stable-audio-3",
 ]
-
-[[tool.uv.index]]
-name = "amd-gfx1151"
-url = "https://repo.amd.com/rocm/whl/gfx1151/"
-explicit = true
 
 [project.optional-dependencies]
 mlx = [
@@ -35,24 +29,3 @@ mlx = [
 
 [tool.uv.sources]
 stable-audio-3 = { path = "vendor/stable-audio-3", editable = true }
-torch = [
-  { index = "amd-gfx1151", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
-]
-torchaudio = [
-  { index = "amd-gfx1151", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
-]
-pytorch-triton-rocm = [
-  { index = "amd-gfx1151", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
-]
-triton = [
-  { index = "amd-gfx1151", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
-]
-rocm = [
-  { index = "amd-gfx1151", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
-]
-rocm-sdk-core = [
-  { index = "amd-gfx1151", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
-]
-rocm-sdk-libraries-gfx1151 = [
-  { index = "amd-gfx1151", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
-]
