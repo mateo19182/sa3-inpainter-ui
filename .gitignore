@@ -23,6 +23,7 @@ webui/.vite/
 
 # transient
 /tmp/
+outputs/
 *.log
 .cache/
 .ruff_cache/

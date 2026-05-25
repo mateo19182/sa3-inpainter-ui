@@ -1,0 +1,748 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SAME-S Lo-Fi Lab</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #11130f;
+      --panel: #191d18;
+      --panel-2: #20251f;
+      --text: #eef1ea;
+      --muted: #9aa596;
+      --line: #363d34;
+      --accent: #6ed0a2;
+      --accent-2: #f2c46d;
+      --danger: #ff8a7a;
+      --control: #0d0f0c;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      letter-spacing: 0;
+    }
+
+    main {
+      width: min(1180px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 24px 0 40px;
+    }
+
+    header {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 18px;
+      padding-bottom: 18px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 28px;
+      line-height: 1.05;
+      font-weight: 720;
+    }
+
+    .status {
+      min-height: 28px;
+      color: var(--muted);
+      font-size: 14px;
+      text-align: right;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(330px, 420px) 1fr;
+      gap: 18px;
+      padding-top: 18px;
+      align-items: start;
+    }
+
+    section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+    }
+
+    .controls {
+      display: grid;
+      gap: 12px;
+    }
+
+    fieldset {
+      border: 0;
+      padding: 0;
+      margin: 0;
+      display: grid;
+      gap: 10px;
+    }
+
+    legend {
+      padding: 0 0 2px;
+      color: var(--accent-2);
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    label {
+      display: grid;
+      gap: 5px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    input, select, button {
+      width: 100%;
+      min-height: 38px;
+      border-radius: 6px;
+      border: 1px solid var(--line);
+      background: var(--control);
+      color: var(--text);
+      font: inherit;
+      font-size: 14px;
+    }
+
+    input, select {
+      padding: 8px 10px;
+    }
+
+    input[type="file"] {
+      min-height: 76px;
+      padding: 12px;
+      background: var(--panel-2);
+      border-style: dashed;
+    }
+
+    input[type="checkbox"] {
+      width: 18px;
+      min-height: 18px;
+      accent-color: var(--accent);
+    }
+
+    .check {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+    }
+
+    button {
+      margin-top: 4px;
+      border: 0;
+      background: var(--accent);
+      color: #07120d;
+      font-weight: 760;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      cursor: progress;
+      opacity: 0.6;
+    }
+
+    .results {
+      display: grid;
+      gap: 12px;
+    }
+
+    .preview-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .preview-list:empty {
+      display: none;
+    }
+
+    .empty {
+      min-height: 340px;
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+      border: 1px dashed var(--line);
+      border-radius: 8px;
+      background: #151812;
+    }
+
+    .item {
+      display: grid;
+      gap: 8px;
+      padding: 12px;
+      background: var(--panel-2);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+
+    .item-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 14px;
+      font-weight: 720;
+    }
+
+    .meta {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+      word-break: break-word;
+    }
+
+    .wave {
+      width: 100%;
+      height: 92px;
+      display: block;
+      cursor: pointer;
+      background: #0c0e0b;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+    }
+
+    .wave-audio {
+      display: none;
+    }
+
+    a {
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    pre {
+      margin: 0;
+      max-height: 240px;
+      overflow: auto;
+      white-space: pre-wrap;
+      color: var(--muted);
+      font-size: 12px;
+      background: #0c0e0b;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+    }
+
+    .error {
+      color: var(--danger);
+    }
+
+    @media (max-width: 860px) {
+      main { width: min(100vw - 20px, 680px); padding-top: 16px; }
+      header { align-items: start; flex-direction: column; }
+      .status { text-align: left; }
+      .layout { grid-template-columns: 1fr; }
+      .grid-2, .grid-3 { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>SAME-S Lo-Fi Lab</h1>
+      <div class="status" id="status">Idle</div>
+    </header>
+
+    <div class="layout">
+      <section class="controls">
+        <form id="form">
+          <fieldset>
+            <legend>Audio</legend>
+            <label>
+              Inputs
+              <input id="files" name="files" type="file" accept="audio/*,.wav,.flac,.aiff,.aif,.ogg" multiple required>
+            </label>
+            <div class="preview-list" id="inputPreview"></div>
+          </fieldset>
+
+          <fieldset>
+            <legend>Latents</legend>
+            <div class="grid-2">
+              <label>
+                Operation
+                <select name="op">
+                  <option value="mix">mix</option>
+                  <option value="mean">mean</option>
+                  <option value="add">add</option>
+                  <option value="subtract">subtract</option>
+                  <option value="difference">difference</option>
+                  <option value="multiply">multiply</option>
+                  <option value="interleave">interleave</option>
+                  <option value="concat">concat</option>
+                </select>
+              </label>
+              <label>
+                Alignment
+                <select name="align">
+                  <option value="shortest">shortest</option>
+                  <option value="longest-pad">longest-pad</option>
+                  <option value="first">first</option>
+                </select>
+              </label>
+            </div>
+            <div class="grid-2">
+              <label>
+                Weights
+                <input name="weights" placeholder="0.6,0.4">
+              </label>
+              <label>
+                Operation RMS
+                <select name="op_rms">
+                  <option value="mean">mean</option>
+                  <option value="first">first</option>
+                  <option value="none">none</option>
+                </select>
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>Degradation</legend>
+            <label>
+              Levels
+              <input name="levels" value="1.0,0.7,0.4,0.15">
+            </label>
+            <div class="grid-2">
+              <label>
+                Mode
+                <select name="mode">
+                  <option value="energy">energy</option>
+                  <option value="channels">channels</option>
+                  <option value="sparse">sparse</option>
+                  <option value="svd">svd</option>
+                </select>
+              </label>
+              <label>
+                Normalize
+                <select name="normalize">
+                  <option value="peak">peak</option>
+                  <option value="tanh">tanh</option>
+                  <option value="none">none</option>
+                </select>
+              </label>
+            </div>
+            <div class="grid-3">
+              <label>
+                Tail noise
+                <input name="tail_noise" type="number" min="0" step="0.01" value="0">
+              </label>
+              <label>
+                Gain
+                <input name="gain" type="number" step="0.05" value="1">
+              </label>
+              <label>
+                Seed
+                <input name="seed" type="number" step="1" value="0">
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>Runtime</legend>
+            <label>
+              Model directory
+              <input name="model_dir" value="/home/m19182/Projects/stable-audio-3/models/stable-audio-3-small-sfx-base">
+            </label>
+            <div class="grid-3">
+              <label>
+                Device
+                <input name="device" value="auto">
+              </label>
+              <label>
+                Chunk size
+                <input name="chunk_size" type="number" min="1" step="1" value="64">
+              </label>
+              <label>
+                Overlap
+                <input name="overlap" type="number" min="0" step="1" value="8">
+              </label>
+            </div>
+            <label class="check">
+              <input name="chunked" type="checkbox">
+              Chunk encode/decode
+            </label>
+            <label class="check">
+              <input name="local_only" type="checkbox" checked>
+              Local model only
+            </label>
+          </fieldset>
+
+          <button id="run" type="submit">Render</button>
+        </form>
+      </section>
+
+      <section class="results" id="results">
+        <div class="empty">No render yet</div>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    const form = document.getElementById('form');
+    const statusEl = document.getElementById('status');
+    const results = document.getElementById('results');
+    const button = document.getElementById('run');
+    const filesInput = document.getElementById('files');
+    const inputPreview = document.getElementById('inputPreview');
+    let inputObjectUrls = [];
+    let audioContext = null;
+    const players = new WeakMap();
+
+    function setStatus(text, error = false) {
+      statusEl.textContent = text;
+      statusEl.classList.toggle('error', error);
+    }
+
+    function h(text) {
+      const div = document.createElement('div');
+      div.textContent = text == null ? '' : String(text);
+      return div.innerHTML;
+    }
+
+    function formatBytes(bytes) {
+      if (!bytes) return '0 B';
+      const units = ['B', 'KB', 'MB', 'GB'];
+      let value = bytes;
+      let unit = 0;
+      while (value >= 1024 && unit < units.length - 1) {
+        value /= 1024;
+        unit += 1;
+      }
+      return `${value.toFixed(value >= 10 || unit === 0 ? 0 : 1)} ${units[unit]}`;
+    }
+
+    function getAudioContext() {
+      if (!audioContext) {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      return audioContext;
+    }
+
+    function formatTime(seconds) {
+      if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
+      const mins = Math.floor(seconds / 60);
+      const secs = Math.floor(seconds % 60);
+      return `${mins}:${String(secs).padStart(2, '0')}`;
+    }
+
+    function canvasMetrics(canvas) {
+      const ratio = window.devicePixelRatio || 1;
+      const width = Math.max(1, canvas.clientWidth);
+      const height = Math.max(1, canvas.clientHeight);
+      canvas.width = Math.floor(width * ratio);
+      canvas.height = Math.floor(height * ratio);
+      const ctx = canvas.getContext('2d');
+      ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+      return { ctx, width, height };
+    }
+
+    function clearCanvas(canvas, message = '') {
+      const { ctx, width, height } = canvasMetrics(canvas);
+      ctx.clearRect(0, 0, width, height);
+      ctx.fillStyle = '#0c0e0b';
+      ctx.fillRect(0, 0, width, height);
+      ctx.strokeStyle = '#363d34';
+      ctx.beginPath();
+      ctx.moveTo(0, height / 2);
+      ctx.lineTo(width, height / 2);
+      ctx.stroke();
+      if (message) {
+        ctx.fillStyle = '#9aa596';
+        ctx.font = '12px system-ui, sans-serif';
+        ctx.fillText(message, 10, 22);
+      }
+    }
+
+    function drawPlayer(canvas) {
+      const state = players.get(canvas);
+      if (!state) return;
+      const { ctx, width, height } = canvasMetrics(canvas);
+      const buttonW = 48;
+      const pad = 10;
+      const waveX = buttonW + pad;
+      const waveW = Math.max(1, width - waveX - pad);
+      const mid = height / 2;
+
+      ctx.fillStyle = '#0c0e0b';
+      ctx.fillRect(0, 0, width, height);
+
+      ctx.fillStyle = state.audio.paused ? '#6ed0a2' : '#f2c46d';
+      ctx.beginPath();
+      ctx.arc(24, mid, 15, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#07120d';
+      if (state.audio.paused) {
+        ctx.beginPath();
+        ctx.moveTo(20, mid - 8);
+        ctx.lineTo(20, mid + 8);
+        ctx.lineTo(32, mid);
+        ctx.closePath();
+        ctx.fill();
+      } else {
+        ctx.fillRect(18, mid - 8, 5, 16);
+        ctx.fillRect(27, mid - 8, 5, 16);
+      }
+
+      ctx.strokeStyle = '#363d34';
+      ctx.beginPath();
+      ctx.moveTo(waveX, mid);
+      ctx.lineTo(waveX + waveW, mid);
+      ctx.stroke();
+
+      if (!state.buffer) {
+        ctx.fillStyle = '#9aa596';
+        ctx.font = '12px system-ui, sans-serif';
+        ctx.fillText(state.message || 'loading waveform', waveX, 24);
+        return;
+      }
+
+      const channel = state.buffer.getChannelData(0);
+      const samplesPerPixel = Math.max(1, Math.floor(channel.length / waveW));
+      const scale = height * 0.34;
+
+      ctx.strokeStyle = '#6ed0a2';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (let x = 0; x < waveW; x += 1) {
+        const start = x * samplesPerPixel;
+        let min = 1;
+        let max = -1;
+        for (let i = 0; i < samplesPerPixel && start + i < channel.length; i += 1) {
+          const sample = channel[start + i];
+          if (sample < min) min = sample;
+          if (sample > max) max = sample;
+        }
+        ctx.moveTo(waveX + x + 0.5, mid + min * scale);
+        ctx.lineTo(waveX + x + 0.5, mid + max * scale);
+      }
+      ctx.stroke();
+
+      const duration = state.audio.duration || state.buffer.duration || 0;
+      const progress = duration > 0 ? Math.min(1, state.audio.currentTime / duration) : 0;
+      const playX = waveX + progress * waveW;
+
+      ctx.fillStyle = 'rgba(242, 196, 109, 0.16)';
+      ctx.fillRect(waveX, 0, Math.max(0, playX - waveX), height);
+      ctx.strokeStyle = '#f2c46d';
+      ctx.beginPath();
+      ctx.moveTo(playX, 8);
+      ctx.lineTo(playX, height - 8);
+      ctx.stroke();
+
+      ctx.fillStyle = '#eef1ea';
+      ctx.font = '12px system-ui, sans-serif';
+      const label = `${formatTime(state.audio.currentTime)} / ${formatTime(duration)}`;
+      ctx.fillText(label, waveX, height - 12);
+    }
+
+    function animatePlayer(canvas) {
+      const state = players.get(canvas);
+      if (!state) return;
+      drawPlayer(canvas);
+      if (!state.audio.paused) {
+        state.raf = requestAnimationFrame(() => animatePlayer(canvas));
+      }
+    }
+
+    function pauseOtherPlayers(currentAudio) {
+      document.querySelectorAll('audio.wave-audio').forEach((audio) => {
+        if (audio !== currentAudio) audio.pause();
+      });
+    }
+
+    function setupWavePlayer(canvas, source) {
+      const audio = canvas.closest('.item').querySelector('audio.wave-audio');
+      const state = { audio, buffer: null, message: 'loading waveform', raf: null };
+      players.set(canvas, state);
+      drawPlayer(canvas);
+
+      audio.addEventListener('play', () => {
+        pauseOtherPlayers(audio);
+        animatePlayer(canvas);
+      });
+      audio.addEventListener('pause', () => drawPlayer(canvas));
+      audio.addEventListener('ended', () => drawPlayer(canvas));
+      audio.addEventListener('loadedmetadata', () => drawPlayer(canvas));
+      audio.addEventListener('seeked', () => drawPlayer(canvas));
+
+      canvas.addEventListener('click', async (event) => {
+        const rect = canvas.getBoundingClientRect();
+        const x = event.clientX - rect.left;
+        const buttonW = 48;
+        if (audioContext?.state === 'suspended') await audioContext.resume();
+        if (x <= buttonW) {
+          if (audio.paused) {
+            await audio.play();
+          } else {
+            audio.pause();
+          }
+          drawPlayer(canvas);
+          return;
+        }
+        const duration = audio.duration || state.buffer?.duration || 0;
+        if (duration > 0) {
+          const waveX = buttonW + 10;
+          const waveW = Math.max(1, rect.width - waveX - 10);
+          const pos = Math.max(0, Math.min(1, (x - waveX) / waveW));
+          audio.currentTime = pos * duration;
+          drawPlayer(canvas);
+        }
+      });
+
+      try {
+        const buffer = source.file
+          ? await source.file.arrayBuffer()
+          : await (await fetch(source.url)).arrayBuffer();
+        state.buffer = await getAudioContext().decodeAudioData(buffer);
+        state.message = '';
+        drawPlayer(canvas);
+      } catch (error) {
+        state.message = 'waveform unavailable';
+        drawPlayer(canvas);
+      }
+    }
+
+    function outputItem(title, item, meta) {
+      const url = item.url;
+      return `
+        <div class="item">
+          <div class="item-head">
+            <span>${h(title)}</span>
+            <a href="${h(url)}" target="_blank" rel="noreferrer">open</a>
+          </div>
+          <audio class="wave-audio" preload="metadata" src="${h(url)}"></audio>
+          <canvas class="wave" data-wave-src="${h(url)}"></canvas>
+          <div class="meta">${h(meta)}</div>
+        </div>
+      `;
+    }
+
+    function renderInputPreview() {
+      for (const url of inputObjectUrls) URL.revokeObjectURL(url);
+      inputObjectUrls = [];
+      const files = Array.from(filesInput.files || []);
+      if (!files.length) {
+        inputPreview.innerHTML = '';
+        return;
+      }
+
+      inputPreview.innerHTML = files.map((file, index) => {
+        const url = URL.createObjectURL(file);
+        inputObjectUrls.push(url);
+        return `
+          <div class="item">
+            <div class="item-head">
+              <span>${h(index + 1)}. ${h(file.name)}</span>
+            </div>
+            <audio class="wave-audio" preload="metadata" src="${h(url)}"></audio>
+            <canvas class="wave" data-input-index="${index}"></canvas>
+            <div class="meta">${h(formatBytes(file.size))}${file.type ? ` · ${h(file.type)}` : ''}</div>
+          </div>
+        `;
+      }).join('');
+
+      inputPreview.querySelectorAll('canvas[data-input-index]').forEach((canvas) => {
+        const file = files[Number(canvas.dataset.inputIndex)];
+        setupWavePlayer(canvas, { file });
+      });
+    }
+
+    function drawResultWaveforms() {
+      results.querySelectorAll('canvas[data-wave-src]').forEach((canvas) => {
+        setupWavePlayer(canvas, { url: canvas.dataset.waveSrc });
+      });
+    }
+
+    function renderResult(data) {
+      const pieces = [];
+      if (data.reconstruction?.url) {
+        pieces.push(outputItem(
+          'Reconstruction',
+          data.reconstruction,
+          `peak ${Number(data.reconstruction.pre_normalize_peak || 0).toFixed(4)}`
+        ));
+      }
+      for (const item of data.files || []) {
+        const detail = [
+          `level ${item.level}`,
+          item.kept_energy != null ? `energy ${Number(item.kept_energy).toFixed(3)}` : null,
+          item.kept_channels != null ? `channels ${item.kept_channels}` : null,
+          item.rank != null ? `rank ${item.rank}` : null,
+          `peak ${Number(item.pre_normalize_peak || 0).toFixed(4)}`
+        ].filter(Boolean).join(' · ');
+        pieces.push(outputItem(`${item.mode} ${item.level}`, item, detail));
+      }
+      if (data.stdout || data.stderr) {
+        pieces.push(`<pre>${h([data.stdout, data.stderr].filter(Boolean).join('\n'))}</pre>`);
+      }
+      results.innerHTML = pieces.join('') || '<div class="empty">No audio outputs</div>';
+      drawResultWaveforms();
+    }
+
+    function renderError(data) {
+      results.innerHTML = `
+        <div class="item">
+          <div class="item-head"><span class="error">Render failed</span></div>
+          <pre>${h([data.error, data.stdout, data.stderr].filter(Boolean).join('\n'))}</pre>
+        </div>
+      `;
+    }
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      button.disabled = true;
+      setStatus('Rendering...');
+      results.innerHTML = '<div class="empty">Rendering</div>';
+
+      const body = new FormData(form);
+      body.set('chunked', form.elements.chunked.checked ? 'true' : 'false');
+      body.set('local_only', form.elements.local_only.checked ? 'true' : 'false');
+
+      try {
+        const response = await fetch('/api/run', { method: 'POST', body });
+        const data = await response.json();
+        if (!response.ok || !data.ok) {
+          renderError(data);
+          setStatus('Failed', true);
+          return;
+        }
+        renderResult(data);
+        setStatus(`Done · ${data.run_id}`);
+      } catch (error) {
+        renderError({ error: error.message || String(error) });
+        setStatus('Failed', true);
+      } finally {
+        button.disabled = false;
+      }
+    });
+
+    filesInput.addEventListener('change', renderInputPreview);
+  </script>
+</body>
+</html>
